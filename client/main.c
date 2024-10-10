@@ -4,7 +4,7 @@
  *  BlueZ - Bluetooth protocol stack for Linux
  *
  *  Copyright (C) 2012  Intel Corporation. All rights reserved.
- *
+ *  Copyright 2024 NXP
  *
  */
 
@@ -22,7 +22,9 @@
 
 #include <glib.h>
 
+#include "src/shared/mainloop.h"
 #include "src/shared/shell.h"
+#include "src/shared/timeout.h"
 #include "src/shared/util.h"
 #include "src/shared/ad.h"
 #include "gdbus/gdbus.h"
@@ -34,6 +36,7 @@
 #include "admin.h"
 #include "player.h"
 #include "mgmt.h"
+#include "assistant.h"
 
 /* String display constants */
 #define COLORED_NEW	COLOR_GREEN "NEW" COLOR_OFF
@@ -218,33 +221,6 @@ done:
 					address, name);
 }
 
-static void print_uuid(const char *label, const char *uuid)
-{
-	const char *text;
-
-	text = bt_uuidstr_to_str(uuid);
-	if (text) {
-		char str[26];
-		unsigned int n;
-
-		str[sizeof(str) - 1] = '\0';
-
-		n = snprintf(str, sizeof(str), "%s", text);
-		if (n > sizeof(str) - 1) {
-			str[sizeof(str) - 2] = '.';
-			str[sizeof(str) - 3] = '.';
-			if (str[sizeof(str) - 4] == ' ')
-				str[sizeof(str) - 4] = '.';
-
-			n = sizeof(str) - 1;
-		}
-
-		bt_shell_printf("\t%s: %s%*c(%s)\n", label, str, 26 - n, ' ',
-									uuid);
-	} else
-		bt_shell_printf("\t%s: %*c(%s)\n", label, 26, ' ', uuid);
-}
-
 static void print_uuids(GDBusProxy *proxy)
 {
 	DBusMessageIter iter, value;
@@ -259,7 +235,7 @@ static void print_uuids(GDBusProxy *proxy)
 
 		dbus_message_iter_get_basic(&value, &uuid);
 
-		print_uuid("UUID", uuid);
+		print_uuid("\t", "UUID", uuid);
 
 		dbus_message_iter_next(&value);
 	}
@@ -280,7 +256,7 @@ static void print_experimental(GDBusProxy *proxy)
 
 		dbus_message_iter_get_basic(&value, &uuid);
 
-		print_uuid("ExperimentalFeatures", uuid);
+		print_uuid("\t", "ExperimentalFeatures", uuid);
 
 		dbus_message_iter_next(&value);
 	}
@@ -830,6 +806,11 @@ static gboolean parse_argument(int argc, char *argv[], const char **arg_table,
 {
 	const char **opt;
 
+	if (argc < 2) {
+		bt_shell_printf("Missing argument to %s\n", argv[0]);
+		return FALSE;
+	}
+
 	if (!strcmp(argv[1], "help")) {
 		for (opt = arg_table; opt && *opt; opt++)
 			bt_shell_printf("%s\n", *opt);
@@ -1089,6 +1070,7 @@ static void cmd_pairable(int argc, char *argv[])
 
 static void cmd_discoverable(int argc, char *argv[])
 {
+	DBusMessageIter iter;
 	dbus_bool_t discoverable;
 	char *str;
 
@@ -1097,6 +1079,18 @@ static void cmd_discoverable(int argc, char *argv[])
 
 	if (check_default_ctrl() == FALSE)
 		return bt_shell_noninteractive_quit(EXIT_FAILURE);
+
+	if (discoverable && g_dbus_proxy_get_property(default_ctrl->proxy,
+					"DiscoverableTimeout", &iter)) {
+		uint32_t value;
+
+		dbus_message_iter_get_basic(&iter, &value);
+
+		if (!value)
+			bt_shell_printf("Warning: setting discoverable while "
+					"discoverable-timeout not set(0) is not"
+					" recommended\n");
+	}
 
 	str = g_strdup_printf("discoverable %s",
 				discoverable == TRUE ? "on" : "off");
@@ -1355,7 +1349,7 @@ static void cmd_scan_filter_uuids(int argc, char *argv[])
 		char **uuid;
 
 		for (uuid = filter.uuids; uuid && *uuid; uuid++)
-			print_uuid("UUID", *uuid);
+			print_uuid("\t", "UUID", *uuid);
 
 		return bt_shell_noninteractive_quit(EXIT_SUCCESS);
 	}
@@ -2108,7 +2102,7 @@ static void set_default_local_attribute(char *attr)
 	desc = g_strdup_printf(COLOR_BLUE "[%s]" COLOR_OFF "# ", attr);
 
 	bt_shell_set_prompt(desc);
-	free(desc);
+	g_free(desc);
 }
 
 static void cmd_select_attribute(int argc, char *argv[])
@@ -3060,7 +3054,7 @@ static const struct bt_shell_menu gatt_menu = {
 					"Unregister application service" },
 	{ "register-includes", "<UUID> [handle]", cmd_register_includes,
 					"Register as Included service in." },
-	{ "unregister-includes", "<Service-UUID><Inc-UUID>",
+	{ "unregister-includes", "<Service-UUID> <Inc-UUID>",
 			cmd_unregister_includes,
 				 "Unregister Included service." },
 	{ "register-characteristic",
@@ -3167,13 +3161,25 @@ static const struct bt_shell_opt opt = {
 
 static void client_ready(GDBusClient *client, void *user_data)
 {
+	unsigned int *timeout_id = user_data;
+
+	if (*timeout_id > 0)
+		timeout_remove(*timeout_id);
 	setup_standard_input();
+}
+
+static bool timeout_quit(void *user_data)
+{
+	mainloop_exit_failure();
+	return true;
 }
 
 int main(int argc, char *argv[])
 {
 	GDBusClient *client;
 	int status;
+	int timeout;
+	unsigned int timeout_id;
 
 	bt_shell_init(argc, argv, &opt);
 	bt_shell_set_menu(&main_menu);
@@ -3200,6 +3206,7 @@ int main(int argc, char *argv[])
 	admin_add_submenu();
 	player_add_submenu();
 	mgmt_add_submenu();
+	assistant_add_submenu();
 
 	client = g_dbus_client_new(dbus_conn, "org.bluez", "/org/bluez");
 
@@ -3210,13 +3217,18 @@ int main(int argc, char *argv[])
 	g_dbus_client_set_proxy_handlers(client, proxy_added, proxy_removed,
 							property_changed, NULL);
 
-	g_dbus_client_set_ready_watch(client, client_ready, NULL);
-
+	timeout = bt_shell_get_timeout();
+	timeout_id = 0;
+	if (timeout > 0)
+		timeout_id = timeout_add(timeout * 1000, timeout_quit, NULL,
+						NULL);
+	g_dbus_client_set_ready_watch(client, client_ready, &timeout_id);
 	status = bt_shell_run();
 
 	admin_remove_submenu();
 	player_remove_submenu();
 	mgmt_remove_submenu();
+	assistant_remove_submenu();
 
 	g_dbus_client_unref(client);
 

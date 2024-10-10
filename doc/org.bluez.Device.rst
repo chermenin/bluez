@@ -135,6 +135,25 @@ void CancelPairing()
 	:org.bluez.Error.DoesNotExist:
 	:org.bluez.Error.Failed:
 
+array{array{byte}} GetServiceRecords() [experimental]
+`````````````````````````````````````````````````````
+
+	Returns all currently known BR/EDR service records for the device. Each
+	individual byte array represents a raw SDP record, as defined by the
+	Bluetooth Service Discovery Protocol specification.
+
+	This method is intended to be only used by compatibility layers like
+	Wine, that need to provide access to raw SDP records to support foreign
+	Bluetooth APIs. General applications should instead use the Profile API
+	for services-related functionality.
+
+	Possible errors:
+
+	:org.bluez.Error.Failed:
+	:org.bluez.Error.NotReady:
+	:org.bluez.Error.NotConnected:
+	:org.bluez.Error.DoesNotExist:
+
 Properties
 ----------
 
@@ -293,13 +312,13 @@ bool ServicesResolved [readonly]
 
 	Indicate whether or not service discovery has been resolved.
 
-array{byte} AdvertisingFlags [readonly, experimental]
-`````````````````````````````````````````````````````
+array{byte} AdvertisingFlags [readonly]
+```````````````````````````````````````
 
 	The Advertising Data Flags of the remote device.
 
-dict AdvertisingData [readonly, experimental]
-`````````````````````````````````````````````
+dict AdvertisingData [readonly]
+```````````````````````````````
 
 	The Advertising Data of the remote device. Keys are 1 byte AD Type
 	followed by data as byte array.

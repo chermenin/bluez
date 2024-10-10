@@ -5,7 +5,7 @@
  *
  *  Copyright (C) 2011-2012  Intel Corporation
  *  Copyright (C) 2004-2010  Marcel Holtmann <marcel@holtmann.org>
- *  Copyright 2023 NXP
+ *  Copyright 2023-2024 NXP
  *
  *
  */
@@ -27,6 +27,7 @@
 #include "src/shared/util.h"
 #include "src/shared/tester.h"
 #include "src/shared/queue.h"
+#include "src/shared/ad.h"
 #include "monitor/bt.h"
 #include "monitor/rfcomm.h"
 #include "bthost.h"
@@ -162,11 +163,21 @@ struct btconn {
 	void *recv_data;
 };
 
+enum l2cap_mode {
+	L2CAP_MODE_OTHER,
+	L2CAP_MODE_LE_CRED,
+	L2CAP_MODE_LE_ENH_CRED,
+};
+
 struct l2conn {
+	struct l2conn *next;
 	uint16_t scid;
 	uint16_t dcid;
 	uint16_t psm;
-	struct l2conn *next;
+	enum l2cap_mode mode;
+	uint16_t data_len;
+	uint16_t recv_len;
+	void *recv_data;
 };
 
 struct rcconn {
@@ -184,6 +195,9 @@ struct l2cap_pending_req {
 
 struct l2cap_conn_cb_data {
 	uint16_t psm;
+	uint16_t mtu;
+	uint16_t mps;
+	uint16_t credits;
 	bthost_l2cap_connect_cb func;
 	bthost_l2cap_disconnect_cb disconn_func;
 	void *user_data;
@@ -275,6 +289,7 @@ struct bthost *bthost_create(void)
 
 static void l2conn_free(struct l2conn *conn)
 {
+	free(conn->recv_data);
 	free(conn);
 }
 
@@ -360,6 +375,7 @@ static struct l2conn *bthost_add_l2cap_conn(struct bthost *bthost,
 	l2conn->psm = psm;
 	l2conn->scid = scid;
 	l2conn->dcid = dcid;
+	l2conn->mode = L2CAP_MODE_OTHER;
 
 	l2conn->next = conn->l2conns;
 	conn->l2conns = l2conn;
@@ -409,6 +425,19 @@ static struct l2conn *btconn_find_l2cap_conn_by_scid(struct btconn *conn,
 
 	for (l2conn = conn->l2conns; l2conn != NULL; l2conn = l2conn->next) {
 		if (l2conn->scid == scid)
+			return l2conn;
+	}
+
+	return NULL;
+}
+
+static struct l2conn *btconn_find_l2cap_conn_by_dcid(struct btconn *conn,
+								uint16_t dcid)
+{
+	struct l2conn *l2conn;
+
+	for (l2conn = conn->l2conns; l2conn != NULL; l2conn = l2conn->next) {
+		if (l2conn->dcid == dcid)
 			return l2conn;
 	}
 
@@ -609,14 +638,24 @@ static void send_iov(struct bthost *bthost, uint16_t handle, uint16_t cid,
 }
 
 static void send_acl(struct bthost *bthost, uint16_t handle, uint16_t cid,
-						const void *data, uint16_t len)
+				bool sdu_hdr, const void *data, uint16_t len)
 {
-	struct iovec iov;
+	struct iovec iov[2];
+	uint16_t sdu;
+	int num = 0;
 
-	iov.iov_base = (void *) data;
-	iov.iov_len = len;
+	if (sdu_hdr) {
+		sdu = cpu_to_le16(len);
+		iov[num].iov_base = &sdu;
+		iov[num].iov_len = sizeof(sdu);
+		num++;
+	}
 
-	send_iov(bthost, handle, cid, &iov, 1);
+	iov[num].iov_base = (void *) data;
+	iov[num].iov_len = len;
+	num++;
+
+	send_iov(bthost, handle, cid, iov, num);
 }
 
 static uint8_t l2cap_sig_send(struct bthost *bthost, struct btconn *conn,
@@ -711,12 +750,19 @@ void bthost_send_cid(struct bthost *bthost, uint16_t handle, uint16_t cid,
 					const void *data, uint16_t len)
 {
 	struct btconn *conn;
+	struct l2conn *l2conn;
+	bool sdu_hdr = false;
 
 	conn = bthost_find_conn(bthost, handle);
 	if (!conn)
 		return;
 
-	send_acl(bthost, handle, cid, data, len);
+	l2conn = btconn_find_l2cap_conn_by_dcid(conn, cid);
+	if (l2conn && (l2conn->mode == L2CAP_MODE_LE_CRED ||
+			l2conn->mode == L2CAP_MODE_LE_ENH_CRED))
+		sdu_hdr = true;
+
+	send_acl(bthost, handle, cid, sdu_hdr, data, len);
 }
 
 void bthost_send_cid_v(struct bthost *bthost, uint16_t handle, uint16_t cid,
@@ -1779,7 +1825,7 @@ static void rfcomm_sabm_send(struct bthost *bthost, struct btconn *conn,
 	cmd.length = RFCOMM_LEN8(0);
 	cmd.fcs = rfcomm_fcs2((uint8_t *)&cmd);
 
-	send_acl(bthost, conn->handle, l2conn->dcid, &cmd, sizeof(cmd));
+	send_acl(bthost, conn->handle, l2conn->dcid, false, &cmd, sizeof(cmd));
 }
 
 static bool l2cap_conn_rsp(struct bthost *bthost, struct btconn *conn,
@@ -2110,6 +2156,7 @@ static bool l2cap_le_conn_req(struct bthost *bthost, struct btconn *conn,
 				uint8_t ident, const void *data, uint16_t len)
 {
 	const struct bt_l2cap_pdu_le_conn_req *req = data;
+	struct l2cap_conn_cb_data *cb_data;
 	struct bt_l2cap_pdu_le_conn_rsp rsp;
 	uint16_t psm;
 
@@ -2120,17 +2167,31 @@ static bool l2cap_le_conn_req(struct bthost *bthost, struct btconn *conn,
 
 	memset(&rsp, 0, sizeof(rsp));
 
-	rsp.mtu = 23;
-	rsp.mps = 23;
-	rsp.credits = 1;
-
-	if (bthost_find_l2cap_cb_by_psm(bthost, psm))
+	cb_data = bthost_find_l2cap_cb_by_psm(bthost, psm);
+	if (cb_data) {
 		rsp.dcid = cpu_to_le16(conn->next_cid++);
-	else
+		rsp.mtu = cpu_to_le16(cb_data->mtu) ? : cpu_to_le16(23);
+		rsp.mps = cpu_to_le16(cb_data->mps) ? : cpu_to_le16(23);
+		rsp.credits = cpu_to_le16(cb_data->credits) ? : cpu_to_le16(1);
+	} else
 		rsp.result = cpu_to_le16(0x0002); /* PSM Not Supported */
 
 	l2cap_sig_send(bthost, conn, BT_L2CAP_PDU_LE_CONN_RSP, ident, &rsp,
 								sizeof(rsp));
+
+	if (!rsp.result) {
+		struct l2conn *l2conn;
+
+		l2conn = bthost_add_l2cap_conn(bthost, conn,
+							le16_to_cpu(rsp.dcid),
+							le16_to_cpu(req->scid),
+							le16_to_cpu(psm));
+		l2conn->mode = L2CAP_MODE_LE_CRED;
+
+		if (cb_data && l2conn->psm == cb_data->psm && cb_data->func)
+			cb_data->func(conn->handle, l2conn->dcid,
+							cb_data->user_data);
+	}
 
 	return true;
 }
@@ -2139,11 +2200,14 @@ static bool l2cap_le_conn_rsp(struct bthost *bthost, struct btconn *conn,
 				uint8_t ident, const void *data, uint16_t len)
 {
 	const struct bt_l2cap_pdu_le_conn_rsp *rsp = data;
+	struct l2conn *l2conn;
 
 	if (len < sizeof(*rsp))
 		return false;
 	/* TODO add L2CAP connection before with proper PSM */
-	bthost_add_l2cap_conn(bthost, conn, 0, le16_to_cpu(rsp->dcid), 0);
+	l2conn = bthost_add_l2cap_conn(bthost, conn, 0,
+						le16_to_cpu(rsp->dcid), 0);
+	l2conn->mode = L2CAP_MODE_LE_CRED;
 
 	return true;
 }
@@ -2196,16 +2260,19 @@ static bool l2cap_ecred_conn_rsp(struct bthost *bthost, struct btconn *conn,
 		uint16_t scid[5];
 	} __attribute__ ((packed)) *rsp = data;
 	int num_scid, i;
+	struct l2conn *l2conn;
 
 	if (len < sizeof(*rsp))
 		return false;
 
 	num_scid = len / sizeof(*rsp->scid);
 
-	for (i = 0; i < num_scid; i++)
+	for (i = 0; i < num_scid; i++) {
 		/* TODO add L2CAP connection before with proper PSM */
-		bthost_add_l2cap_conn(bthost, conn, 0,
+		l2conn = bthost_add_l2cap_conn(bthost, conn, 0,
 				      le16_to_cpu(rsp->scid[i]), 0);
+		l2conn->mode = L2CAP_MODE_LE_ENH_CRED;
+	}
 
 
 	return true;
@@ -2333,7 +2400,7 @@ static void rfcomm_ua_send(struct bthost *bthost, struct btconn *conn,
 	cmd.length = RFCOMM_LEN8(0);
 	cmd.fcs = rfcomm_fcs2((uint8_t *)&cmd);
 
-	send_acl(bthost, conn->handle, l2conn->dcid, &cmd, sizeof(cmd));
+	send_acl(bthost, conn->handle, l2conn->dcid, false, &cmd, sizeof(cmd));
 }
 
 static void rfcomm_dm_send(struct bthost *bthost, struct btconn *conn,
@@ -2347,7 +2414,7 @@ static void rfcomm_dm_send(struct bthost *bthost, struct btconn *conn,
 	cmd.length = RFCOMM_LEN8(0);
 	cmd.fcs = rfcomm_fcs2((uint8_t *)&cmd);
 
-	send_acl(bthost, conn->handle, l2conn->dcid, &cmd, sizeof(cmd));
+	send_acl(bthost, conn->handle, l2conn->dcid, false, &cmd, sizeof(cmd));
 }
 
 static void rfcomm_sabm_recv(struct bthost *bthost, struct btconn *conn,
@@ -2636,12 +2703,97 @@ static void process_rfcomm(struct bthost *bthost, struct btconn *conn,
 	}
 }
 
-static void process_l2cap(struct bthost *bthost, struct btconn *conn,
-					const void *data, uint16_t len)
+static void append_l2conn_data(struct bthost *bthost, struct l2conn *conn,
+				const void *data, uint16_t len)
 {
-	const struct bt_l2cap_hdr *l2_hdr = data;
+	if (!conn->recv_data) {
+		bthost_debug(bthost, "Unexpected L2CAP SDU data: sCID 0x%4.4x ",
+								conn->scid);
+		return;
+	}
+
+	if (conn->recv_len + len > conn->data_len) {
+		bthost_debug(bthost, "Unexpected L2CAP SDU data: sCID 0x%4.4x ",
+								conn->scid);
+		return;
+	}
+
+	memcpy(conn->recv_data + conn->recv_len, data, len);
+	conn->recv_len += len;
+
+	bthost_debug(bthost, "L2CAP SDU data: %u/%u bytes", conn->recv_len,
+							conn->data_len);
+}
+
+static void free_l2conn_data(struct l2conn *conn)
+{
+	free(conn->recv_data);
+	conn->recv_data = NULL;
+	conn->recv_len = 0;
+	conn->data_len = 0;
+}
+
+static void new_l2conn_data(struct bthost *bthost, struct l2conn *conn,
+								uint16_t len)
+{
+	free(conn->recv_data);
+	conn->recv_data = malloc(len);
+	conn->recv_len = 0;
+	conn->data_len = len;
+}
+
+static bool process_l2cap_conn(struct bthost *bthost, struct btconn *conn,
+				struct l2conn *l2conn, struct iovec *data)
+{
+	struct bt_l2cap_pdu_le_flowctl_creds creds;
+	uint16_t sdu;
+
+	if (!l2conn)
+		return true;
+
+	switch (l2conn->mode) {
+	case L2CAP_MODE_LE_CRED:
+	case L2CAP_MODE_LE_ENH_CRED:
+		break;
+	case L2CAP_MODE_OTHER:
+		return true;
+	}
+
+	/* Credit-based flow control */
+
+	creds.cid = cpu_to_le16(l2conn->scid);
+	creds.credits = cpu_to_le16(1);
+	l2cap_sig_send(bthost, conn, BT_L2CAP_PDU_LE_FLOWCTL_CREDS, 0,
+							&creds, sizeof(creds));
+
+	if (!l2conn->data_len) {
+		if (!util_iov_pull_le16(data, &sdu)) {
+			free_l2conn_data(l2conn);
+			bthost_debug(bthost, "L2CAP invalid SDU");
+			return false;
+		}
+		new_l2conn_data(bthost, l2conn, sdu);
+	}
+
+	append_l2conn_data(bthost, l2conn, data->iov_base, data->iov_len);
+
+	if (l2conn->recv_len < l2conn->data_len)
+		return false;  /* SDU incomplete */
+
+	l2conn->data_len = 0;
+	data->iov_base = l2conn->recv_data;
+	data->iov_len = l2conn->recv_len;
+
+	return true;
+}
+
+static void process_l2cap(struct bthost *bthost, struct btconn *conn,
+					const void *buf, uint16_t len)
+{
+	const struct bt_l2cap_hdr *l2_hdr = buf;
 	struct cid_hook *hook;
 	struct l2conn *l2conn;
+	struct iovec data;
 	uint16_t cid, l2_len;
 
 	l2_len = le16_to_cpu(l2_hdr->len);
@@ -2654,31 +2806,37 @@ static void process_l2cap(struct bthost *bthost, struct btconn *conn,
 	bthost_debug(bthost, "L2CAP data: %u bytes", l2_len);
 
 	cid = le16_to_cpu(l2_hdr->cid);
+	l2conn = btconn_find_l2cap_conn_by_scid(conn, cid);
+
+	data.iov_base = (void *)l2_hdr->data;
+	data.iov_len = l2_len;
+
+	if (!process_l2cap_conn(bthost, conn, l2conn, &data))
+		return;
 
 	hook = find_cid_hook(conn, cid);
 	if (hook) {
-		hook->func(l2_hdr->data, l2_len, hook->user_data);
+		hook->func(data.iov_base, data.iov_len, hook->user_data);
 		return;
 	}
 
 	switch (cid) {
 	case 0x0001:
-		l2cap_sig(bthost, conn, l2_hdr->data, l2_len);
+		l2cap_sig(bthost, conn, data.iov_base, data.iov_len);
 		break;
 	case 0x0005:
-		l2cap_le_sig(bthost, conn, l2_hdr->data, l2_len);
+		l2cap_le_sig(bthost, conn, data.iov_base, data.iov_len);
 		break;
 	case 0x0006:
-		smp_data(conn->smp_data, l2_hdr->data, l2_len);
+		smp_data(conn->smp_data, data.iov_base, data.iov_len);
 		break;
 	case 0x0007:
-		smp_bredr_data(conn->smp_data, l2_hdr->data, l2_len);
+		smp_bredr_data(conn->smp_data, data.iov_base, data.iov_len);
 		break;
 	default:
-		l2conn = btconn_find_l2cap_conn_by_scid(conn, cid);
 		if (l2conn && l2conn->psm == 0x0003)
-			process_rfcomm(bthost, conn, l2conn, l2_hdr->data,
-								l2_len);
+			process_rfcomm(bthost, conn, l2conn, data.iov_base,
+								data.iov_len);
 		else
 			bthost_debug(bthost,
 					"Packet for unknown CID 0x%04x (%u)",
@@ -3127,6 +3285,73 @@ void bthost_set_pa_params(struct bthost *bthost)
 	send_command(bthost, BT_HCI_CMD_LE_SET_PA_PARAMS, &cp, sizeof(cp));
 }
 
+static void set_pa_data(struct bthost *bthost, const uint8_t *data,
+				uint8_t len, uint8_t offset)
+{
+	struct bt_hci_cmd_le_set_pa_data *cp;
+	uint8_t buf[sizeof(*cp) + BT_PA_MAX_DATA_LEN];
+	size_t data_len;
+
+	cp = (void *)buf;
+
+	memset(cp, 0, sizeof(*cp));
+	memset(cp->data, 0, BT_PA_MAX_DATA_LEN);
+
+	cp->handle = 1;
+
+	if (len - offset > BT_PA_MAX_DATA_LEN) {
+		data_len = BT_PA_MAX_DATA_LEN;
+
+		if (!offset)
+			cp->operation = 0x01;
+		else
+			cp->operation = 0x00;
+	} else {
+		data_len = len - offset;
+
+		if (!offset)
+			cp->operation = 0x03;
+		else
+			cp->operation = 0x02;
+	}
+
+	memcpy(cp->data, data + offset, data_len);
+	cp->data_len = data_len;
+
+	send_command(bthost, BT_HCI_CMD_LE_SET_PA_DATA, buf,
+					sizeof(*cp) + cp->data_len);
+
+	if (cp->operation == 0x01 || cp->operation == 0x00) {
+		offset += cp->data_len;
+		set_pa_data(bthost, data, len, offset);
+	}
+}
+
+void bthost_set_pa_data(struct bthost *bthost, const uint8_t *data,
+							uint8_t len)
+{
+	set_pa_data(bthost, data, len, 0);
+}
+
+void bthost_set_base(struct bthost *bthost, const uint8_t *data, uint8_t len)
+{
+	struct bt_ad *ad;
+	bt_uuid_t uuid;
+	uint8_t *pa_data;
+	size_t pa_len;
+
+	bt_uuid16_create(&uuid, BAA_SERVICE);
+
+	ad = bt_ad_new();
+	bt_ad_set_max_len(ad, BT_PA_MAX_DATA_LEN);
+	bt_ad_add_service_data(ad, &uuid, (void *)data, len);
+
+	pa_data = bt_ad_generate(ad, &pa_len);
+	bthost_set_pa_data(bthost, pa_data, pa_len);
+
+	bt_ad_unref(ad);
+}
+
 void bthost_set_pa_enable(struct bthost *bthost, uint8_t enable)
 {
 	struct bt_hci_cmd_le_set_pa_enable cp;
@@ -3290,7 +3515,8 @@ uint64_t bthost_conn_get_fixed_chan(struct bthost *bthost, uint16_t handle)
 	return conn->fixed_chan;
 }
 
-void bthost_add_l2cap_server(struct bthost *bthost, uint16_t psm,
+void bthost_add_l2cap_server_custom(struct bthost *bthost, uint16_t psm,
+				uint16_t mtu, uint16_t mps, uint16_t credits,
 				bthost_l2cap_connect_cb func,
 				bthost_l2cap_disconnect_cb disconn_func,
 				void *user_data)
@@ -3302,12 +3528,24 @@ void bthost_add_l2cap_server(struct bthost *bthost, uint16_t psm,
 		return;
 
 	data->psm = psm;
+	data->mtu = mtu;
+	data->mps = mps;
+	data->credits = credits;
 	data->user_data = user_data;
 	data->func = func;
 	data->disconn_func = disconn_func;
 	data->next = bthost->new_l2cap_conn_data;
 
 	bthost->new_l2cap_conn_data = data;
+}
+
+void bthost_add_l2cap_server(struct bthost *bthost, uint16_t psm,
+				bthost_l2cap_connect_cb func,
+				bthost_l2cap_disconnect_cb disconn_func,
+				void *user_data)
+{
+	bthost_add_l2cap_server_custom(bthost, psm, 0, 0, 0, func,
+					disconn_func, user_data);
 }
 
 void bthost_set_sc_support(struct bthost *bthost, bool enable)
@@ -3494,7 +3732,7 @@ void bthost_send_rfcomm_data(struct bthost *bthost, uint16_t handle,
 	}
 
 	uih_frame[uih_len - 1] = rfcomm_fcs((void *)hdr);
-	send_acl(bthost, handle, rcconn->scid, uih_frame, uih_len);
+	send_acl(bthost, handle, rcconn->scid, false, uih_frame, uih_len);
 
 	free(uih_frame);
 }

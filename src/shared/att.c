@@ -551,7 +551,7 @@ static bool can_write_data(struct io *io, void *user_data)
 	if (!op)
 		return false;
 
-	if (!bt_att_chan_write(chan, op->opcode, op->pdu, op->len)) {
+	if (bt_att_chan_write(chan, op->opcode, op->pdu, op->len) < 0) {
 		if (op->callback)
 			op->callback(BT_ATT_OP_ERROR_RSP, NULL, 0,
 							op->user_data);
@@ -1009,8 +1009,9 @@ static void handle_notify(struct bt_att_chan *chan, uint8_t *pdu,
 		found = true;
 
 		if (notify->callback)
-			notify->callback(chan, opcode, pdu + 1, pdu_len - 1,
-							notify->user_data);
+			notify->callback(chan, chan->mtu, opcode,
+						pdu + 1, pdu_len - 1,
+						notify->user_data);
 
 		/* callback could remove all entries from notify list */
 		if (queue_isempty(att->notify_list))

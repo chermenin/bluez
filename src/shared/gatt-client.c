@@ -735,6 +735,7 @@ static bool discover_descs(struct discovery_op *op, bool *discovering)
 		}
 
 		attr = gatt_db_insert_characteristic(client->db,
+							chrc_data->start_handle,
 							chrc_data->value_handle,
 							&chrc_data->uuid, 0,
 							chrc_data->properties,
@@ -829,6 +830,8 @@ done:
 	return true;
 
 failed:
+	DBG(client, "Failed to discover descriptors");
+
 	free(chrc_data);
 	return false;
 }
@@ -1273,7 +1276,9 @@ next:
 
 	range = queue_peek_head(op->discov_ranges);
 
-	client->discovery_req = bt_gatt_discover_included_services(client->att,
+	if (range)
+		client->discovery_req = bt_gatt_discover_included_services(
+							client->att,
 							range->start,
 							range->end,
 							discover_incl_cb,
@@ -1663,7 +1668,7 @@ static bool notify_data_write_ccc(struct notify_data *notify_data, bool enable,
 					bt_gatt_client_callback_t callback)
 {
 	unsigned int att_id;
-	uint16_t value;
+	uint16_t value = 0x0000;
 	uint16_t properties = notify_data->chrc->properties;
 
 	assert(notify_data->chrc->ccc_handle);
@@ -2225,7 +2230,7 @@ static void notify_handler(void *data, void *user_data)
 				value_data->len, notify_data->user_data);
 }
 
-static void notify_cb(struct bt_att_chan *chan, uint8_t opcode,
+static void notify_cb(struct bt_att_chan *chan, uint16_t mtu, uint8_t opcode,
 					const void *pdu, uint16_t length,
 					void *user_data)
 {

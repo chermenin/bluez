@@ -20,6 +20,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <limits.h>
 
 #include <glib.h>
 
@@ -55,7 +56,7 @@ struct rfkill_event {
 };
 #define RFKILL_EVENT_SIZE_V1    8
 
-static int get_adapter_id_for_rfkill(int rfkill_id)
+static int get_adapter_id_for_rfkill(uint32_t rfkill_id)
 {
 	char sysname[PATH_MAX];
 	int namefd;

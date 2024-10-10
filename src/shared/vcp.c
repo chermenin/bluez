@@ -925,6 +925,10 @@ static void vcs_cp_write(struct gatt_db_attribute *attrib,
 	}
 
 	vcp_op = iov_pull_mem(&iov, sizeof(*vcp_op));
+	if (!vcp_op) {
+		DBG(vcp, "iov_pull_mem() returned NULL");
+		goto respond;
+	}
 
 	for (handler = vcp_handlers; handler && handler->str; handler++) {
 		if (handler->op != *vcp_op)
@@ -985,6 +989,10 @@ static void vocs_cp_write(struct gatt_db_attribute *attrib,
 	}
 
 	vcp_op = iov_pull_mem(&iov, sizeof(*vcp_op));
+	if (!vcp_op) {
+		DBG(vcp, "iov_pull_mem() returned NULL");
+		goto respond;
+	}
 
 	for (handler = vocp_handlers; handler && handler->str; handler++) {
 		if (handler->op != *vcp_op)
@@ -1517,6 +1525,10 @@ static void aics_ip_cp_write(struct gatt_db_attribute *attrib,
 	}
 
 	aics_op = iov_pull_mem(&iov, sizeof(*aics_op));
+	if (!aics_op) {
+		DBG(vcp, "iov_pull_mem() returned NULL");
+		goto respond;
+	}
 
 	for (handler = aics_handlers; handler && handler->str; handler++) {
 		if (handler->op != *aics_op)
@@ -2127,14 +2139,8 @@ static void read_vocs_audio_descriptor(struct bt_vcp *vcp, bool success,
 		return;
 	}
 
-	vocs_ao_dec_r = malloc(length+1);
-	memset(vocs_ao_dec_r, 0, length+1);
-	memcpy(vocs_ao_dec_r, value, length);
-
-	if (!vocs_ao_dec_r) {
-		DBG(vcp, "Unable to get VOCS Audio Descriptor");
-		return;
-	}
+	vocs_ao_dec_r = util_memdup(value, length + 1);
+	memset(vocs_ao_dec_r + length, 0, 1);
 
 	DBG(vcp, "VOCS Audio Descriptor: %s", vocs_ao_dec_r);
 	free(vocs_ao_dec_r);
@@ -2531,14 +2537,8 @@ static void read_aics_audio_ip_description(struct bt_vcp *vcp, bool success,
 		return;
 	}
 
-	ip_descrptn = malloc(length+1);
-	memset(ip_descrptn, 0, length+1);
-	memcpy(ip_descrptn, value, length);
-
-	if (!ip_descrptn) {
-		DBG(vcp, "Unable to get Audio Input Description");
-		return;
-	}
+	ip_descrptn = util_memdup(value, length + 1);
+	memset(ip_descrptn + length, 0, 1);
 
 	DBG(vcp, "Audio Input Description: %s", ip_descrptn);
 	free(ip_descrptn);
@@ -2622,7 +2622,7 @@ static void foreach_aics_char(struct gatt_db_attribute *attr, void *user_data)
 			value_handle);
 
 		aics = vcp_get_aics(vcp);
-		if (!aics || aics->gain_stting_prop)
+		if (!aics || aics->aud_ip_type)
 			return;
 
 		aics->aud_ip_type = attr;
@@ -2701,6 +2701,9 @@ static void foreach_vocs_service(struct gatt_db_attribute *attr,
 	struct bt_vcp *vcp = user_data;
 	struct bt_vocs *vocs = vcp_get_vocs(vcp);
 
+	if (!vocs || !attr)
+		return;
+
 	vocs->service = attr;
 
 	gatt_db_service_set_claimed(attr, true);
@@ -2713,6 +2716,9 @@ static void foreach_aics_service(struct gatt_db_attribute *attr,
 {
 	struct bt_vcp *vcp = user_data;
 	struct bt_aics *aics = vcp_get_aics(vcp);
+
+	if (!aics || !attr)
+		return;
 
 	aics->service = attr;
 

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0
 AC_PREREQ(2.60)
-AC_INIT(bluez, 5.72)
+AC_INIT(bluez, 5.78)
 
 AM_INIT_AUTOMAKE([foreign subdir-objects color-tests silent-rules
 					tar-pax no-dist-gzip dist-xz])
@@ -70,7 +70,16 @@ AC_CHECK_LIB(pthread, pthread_create, dummy=yes,
 AC_CHECK_LIB(dl, dlopen, dummy=yes,
 			AC_MSG_ERROR(dynamic linking loader is required))
 
-AC_CHECK_HEADERS(linux/types.h linux/if_alg.h linux/uinput.h linux/uhid.h sys/random.h)
+AC_CHECK_HEADERS(string.h linux/types.h linux/if_alg.h linux/uinput.h linux/uhid.h sys/random.h)
+
+# basename may be only available in libgen.h with the POSIX behavior,
+# not desired here
+AC_CHECK_DECLS([basename], [],
+				AC_MSG_WARN([GNU basename extension not found]),
+				[#define _GNU_SOURCE 1
+				 #include <string.h>
+				 ])
+
 
 PKG_CHECK_MODULES(GLIB, glib-2.0 >= 2.28)
 
@@ -200,6 +209,10 @@ AC_ARG_ENABLE(mcp, AS_HELP_STRING([--disable-mcp],
         [disable MCP profile]), [enable_mcp=${enableval}])
 AM_CONDITIONAL(MCP, test "${enable_mcp}" != "no")
 
+AC_ARG_ENABLE(ccp, AS_HELP_STRING([--disable-ccp],
+        [disable CCP profile]), [enable_ccp=${enableval}])
+AM_CONDITIONAL(CCP, test "${enable_ccp}" != "no")
+
 AC_ARG_ENABLE(vcp, AS_HELP_STRING([--disable-vcp],
 		[disable VCP profile]), [enable_vcp=${enableval}])
 AM_CONDITIONAL(VCP, test "${enable_vcp}" != "no")
@@ -212,6 +225,10 @@ AC_ARG_ENABLE(csip, AS_HELP_STRING([--disable-csip],
 		[disable CSIP profile]), [enable_csip=${enableval}])
 AM_CONDITIONAL(CSIP, test "${enable_csip}" != "no")
 
+AC_ARG_ENABLE(asha, AS_HELP_STRING([--disable-asha],
+		[disable ASHA support]), [enable_asha=${enableval}])
+AM_CONDITIONAL(ASHA, test "${enable_asha}" != "no")
+
 AC_ARG_ENABLE(tools, AS_HELP_STRING([--disable-tools],
 		[disable Bluetooth tools]), [enable_tools=${enableval}])
 AM_CONDITIONAL(TOOLS, test "${enable_tools}" != "no")
@@ -222,7 +239,7 @@ AM_CONDITIONAL(MONITOR, test "${enable_monitor}" != "no")
 
 AC_ARG_ENABLE(udev, AS_HELP_STRING([--disable-udev],
 		[disable udev device support]), [enable_udev=${enableval}])
-if (test "${enable_tools}" != "no" && test "${enable_udev}" != "no"); then
+if (test "${enable_udev}" != "no"); then
 	PKG_CHECK_MODULES(UDEV, libudev >= 196)
 	AC_DEFINE(HAVE_UDEV, 1, [Define to 1 if udev is required])
 fi
@@ -242,6 +259,15 @@ AC_SUBST(UDEV_DIR, [${path_udevdir}])
 AC_ARG_ENABLE(cups, AS_HELP_STRING([--disable-cups],
                 [disable CUPS printer support]), [enable_cups=${enableval}])
 AM_CONDITIONAL(CUPS, test "${enable_cups}" != "no")
+if (test "${enable_cups}" != "no"); then
+	AC_MSG_CHECKING([cups directory])
+	cups_serverbin=`$PKG_CONFIG cups --variable=cups_serverbin`
+	AC_MSG_RESULT([${cups_serverbin}])
+fi
+AM_CONDITIONAL(CUPS_SERVERBIN, test "${cups_serverbin}" != "")
+AS_IF([test "${cups_serverbin}" != ""],[
+	AC_SUBST(CUPS_SERVERBIN, ${cups_serverbin})
+])
 
 AC_ARG_ENABLE(mesh, AS_HELP_STRING([--enable-mesh],
 		[enable Mesh profile support]), [enable_mesh=${enableval}])
@@ -364,7 +390,7 @@ AC_ARG_ENABLE(deprecated, AS_HELP_STRING([--enable-deprecated],
 					[enable_deprecated=${enableval}])
 AM_CONDITIONAL(DEPRECATED, test "${enable_deprecated}" = "yes")
 
-AC_ARG_ENABLE(external-plugsin, AS_HELP_STRING([--enable-external-plugins],
+AC_ARG_ENABLE(external-plugins, AS_HELP_STRING([--enable-external-plugins],
 			[enable support for external plugins]),
 					[enable_external_plugins=${enableval}])
 AM_CONDITIONAL(EXTERNAL_PLUGINS, test "${enable_external_plugins}" = "yes")
@@ -400,6 +426,32 @@ if (test "${prefix}" = "NONE"); then
 
 	prefix="${ac_default_prefix}"
 fi
+
+if (test "${exec_prefix}" = "NONE"); then
+	# exec_prefix defaults to prefix, although our manual handling of the
+	# latter (above) confuses autoconf. Manually set the exec_prefix.
+	exec_prefix="${prefix}"
+fi
+
+# Expand any variables containing relative references like ${prefix} and co.
+#
+# Otherwise we'll end up with literal references in the final binaries or
+# manuals, which is not something we really want.
+#
+pkgbindir="${bindir}"
+if (test "$bindir" = '${exec_prefix}/bin'); then
+	pkgbindir="${exec_prefix}/bin"
+else
+	pkgbindir="${bindir}"
+fi
+AC_SUBST(PKGBINDIR, "${pkgbindir}")
+
+if (test "$libexecdir" = '${exec_prefix}/libexec'); then
+	pkglibexecdir="${exec_prefix}/libexec/bluetooth"
+else
+	pkglibexecdir="${libexecdir}/bluetooth"
+fi
+AC_SUBST(PKGLIBEXECDIR, "${pkglibexecdir}")
 
 if (test "$localstatedir" = '${prefix}/var'); then
 	storagedir="${prefix}/var/lib/bluetooth"
@@ -457,8 +509,10 @@ AC_CONFIG_FILES(
 	mesh/bluetooth-meshd.rst
 	mesh/bluetooth-mesh.service
 	obexd/src/obex.service
+	obexd/src/org.bluez.obex.service
 	src/bluetoothd.rst
 	src/bluetooth.service
 	tools/bluetooth-logger.service
+	tools/mpris-proxy.service
 )
 AC_OUTPUT

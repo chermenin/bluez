@@ -1839,14 +1839,13 @@ static const char set_adv_set_local_name_param[260] = { 'T', 'e', 's', 't', ' ',
 							'n', 'a', 'm', 'e' };
 
 static const uint8_t set_adv_scan_rsp_data_name_1[] = {
-	0x0c, /* Scan rsp data len */
-	0x0b, /* Local name data len */
+	0x0b, /* Scan rsp data len */
+	0x0a, /* Local name data len */
 	0x09, /* Complete name */
 	0x54, 0x65, 0x73, 0x74, 0x20, 0x6e, 0x61, 0x6d, 0x65, /* "Test name" */
-	0x00, /* null */
 	/* padding */
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 };
 
 static const struct generic_data set_adv_on_local_name_test_1 = {
@@ -1879,17 +1878,16 @@ static const struct setup_mgmt_cmd set_advertising_mgmt_cmd_arr[] = {
 };
 
 static const uint8_t set_adv_scan_rsp_data_name_and_appearance[] = {
-	0x10, /* scan rsp data len */
+	0x0f, /* scan rsp data len */
 	0x03, /* appearance data len */
 	0x19, /* eir_appearance */
 	0x54, 0x65, /* appearance value */
-	0x0b, /* local name data len */
+	0x0a, /* local name data len */
 	0x09, /* complete name */
 	0x54, 0x65, 0x73, 0x74, 0x20, 0x6e, 0x61, 0x6d, 0x65, /* "test name" */
-	0x00, /* null */
 	/* padding */
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00,
+	0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 };
 
 
@@ -7852,8 +7850,8 @@ static const uint8_t add_advertising_param_name[] = {
 };
 
 static const uint8_t set_scan_rsp_data_name_fits_in_scrsp[] = {
-	0x0c, /* Scan rsp data len */
-	0x0b, /* Local name data len */
+	0x0b, /* Scan rsp data len */
+	0x0a, /* Local name data len */
 	0x09, /* Complete name */
 	0x54, 0x65, 0x73, 0x74, 0x20, 0x6e, 0x61, 0x6d, 0x65, /* "Test name" */
 	/* padding */
@@ -7878,8 +7876,8 @@ static const struct generic_data add_advertising_name_fits_in_scrsp = {
 };
 
 static const uint8_t set_scan_rsp_data_shortened_name_fits[] = {
-	0x0d, /* Scan rsp data len */
-	0x0c, /* Local name data len */
+	0x0c, /* Scan rsp data len */
+	0x0b, /* Local name data len */
 	0x08, /* Short name */
 	0x54, 0x65, 0x73, 0x74, 0x20, 0x6e, 0x61, 0x6d, 0x65, 0x31,
 	/* "Test name1" */
@@ -7905,8 +7903,8 @@ static const struct generic_data add_advertising_shortened_name_in_scrsp = {
 };
 
 static const uint8_t set_scan_rsp_data_short_name_fits[] = {
-	0x07, /* Scan rsp data len */
-	0x06, /* Local name data len */
+	0x06, /* Scan rsp data len */
+	0x05, /* Local name data len */
 	0x08, /* Short name */
 	0x54, 0x65, 0x73, 0x74,
 	/* "Test*/
@@ -7946,16 +7944,16 @@ static const uint8_t add_advertising_param_name_data_ok[] = {
 };
 
 static const uint8_t set_scan_rsp_data_param_name_data_ok[] = {
-	0x1e, /* Scan rsp data len */
+	0x1d, /* Scan rsp data len */
 	/* scan rsp data */
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x0b, /* Local name data len */
+	0x0a, /* Local name data len */
 	0x09, /* Complete name */
-	0x54, 0x65, 0x73, 0x74, 0x20, 0x6e, 0x61, 0x6d, 0x65, 0x00,
+	0x54, 0x65, 0x73, 0x74, 0x20, 0x6e, 0x61, 0x6d, 0x65,
 	/* "Test name" */
 	/* padding */
-	0x00,
+	0x00, 0x00,
 };
 
 static const struct generic_data add_advertising_name_data_ok = {
@@ -8050,19 +8048,19 @@ static const struct setup_mgmt_cmd add_advertising_mgmt_cmd_arr[] = {
 };
 
 static const uint8_t set_scan_rsp_data_name_data_appear[] = {
-	0x1e, /* Scan rsp data len */
+	0x1d, /* Scan rsp data len */
 	0x03, /* appearance len */
 	0x19, /* EIR_APPEARANCE */
 	0x54, 0x65, /* appearance value */
 	/* scan rsp data */
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
-	0x0b, /* Local name data len */
+	0x0a, /* Local name data len */
 	0x09, /* Complete name */
-	0x54, 0x65, 0x73, 0x74, 0x20, 0x6e, 0x61, 0x6d, 0x65, 0x00,
+	0x54, 0x65, 0x73, 0x74, 0x20, 0x6e, 0x61, 0x6d, 0x65,
 	/* "Test name" */
 	/* padding */
-	0x00,
+	0x00, 0x00,
 };
 
 static const struct generic_data add_advertising_name_data_appear = {
@@ -8976,11 +8974,11 @@ static const uint8_t set_ext_scan_rsp_data_name_fits_in_scrsp[] = {
 	0x01,				/* handle */
 	0x03,				/* complete data */
 	0x01,				/* controller should not fragment */
-	0x0c, /* Scan rsp data len */
-	0x0b, /* Local name data len */
+	0x0b, /* Scan rsp data len */
+	0x0a, /* Local name data len */
 	0x09, /* Complete name */
 	/* "Test name" */
-	0x54, 0x65, 0x73, 0x74, 0x20, 0x6e, 0x61, 0x6d, 0x65, 0x00,
+	0x54, 0x65, 0x73, 0x74, 0x20, 0x6e, 0x61, 0x6d, 0x65,
 };
 
 static const struct generic_data add_ext_advertising_name_fits_in_scrsp = {
@@ -9003,11 +9001,11 @@ static const uint8_t set_ext_scan_rsp_data_shortened_name_fits[] = {
 	0x01,				/* handle */
 	0x03,				/* complete data */
 	0x01,				/* controller should not fragment */
-	0x0d, /* Scan rsp data len */
-	0x0c, /* Local name data len */
+	0x0c, /* Scan rsp data len */
+	0x0b, /* Local name data len */
 	0x08, /* Short name */
 	/* "Test name1" */
-	0x54, 0x65, 0x73, 0x74, 0x20, 0x6e, 0x61, 0x6d, 0x65, 0x31, 0x00,
+	0x54, 0x65, 0x73, 0x74, 0x20, 0x6e, 0x61, 0x6d, 0x65, 0x31,
 };
 
 static const struct generic_data add_ext_advertising_shortened_name_in_scrsp = {
@@ -9030,13 +9028,13 @@ static const uint8_t set_ext_scan_rsp_data_param_name_data_ok[] = {
 	0x01,				/* handle */
 	0x03,				/* complete data */
 	0x01,				/* controller should not fragment */
-	0x1e, /* Scan rsp data len */
+	0x1d, /* Scan rsp data len */
 	/* scan rsp data */
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x0b, /* Local name data len */
+	0x0a, /* Local name data len */
 	0x09, /* Complete name */
-	0x54, 0x65, 0x73, 0x74, 0x20, 0x6e, 0x61, 0x6d, 0x65, 0x00,
+	0x54, 0x65, 0x73, 0x74, 0x20, 0x6e, 0x61, 0x6d, 0x65,
 	/* "Test name" */
 };
 
@@ -9073,16 +9071,16 @@ static const uint8_t set_ext_scan_rsp_data_name_data_appear[] = {
 	0x01,				/* handle */
 	0x03,				/* complete data */
 	0x01,				/* controller should not fragment */
-	0x1e, /* Scan rsp data len */
+	0x1d, /* Scan rsp data len */
 	0x03, /* appearance len */
 	0x19, /* EIR_APPEARANCE */
 	0x54, 0x65, /* appearance value */
 	/* scan rsp data */
 	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 	0x00, 0x00, 0x00, 0x00,
-	0x0b, /* Local name data len */
+	0x0a, /* Local name data len */
 	0x09, /* Complete name */
-	0x54, 0x65, 0x73, 0x74, 0x20, 0x6e, 0x61, 0x6d, 0x65, 0x00,
+	0x54, 0x65, 0x73, 0x74, 0x20, 0x6e, 0x61, 0x6d, 0x65,
 	/* "Test name" */
 };
 
@@ -9653,8 +9651,8 @@ static const char start_discovery_ext_scan_param[] = {
 	0x12, 0x00,		/* Interval */
 	0x12, 0x00,		/* Window */
 	0x01,			/* Type */
-	0x12, 0x00,		/* Interval */
-	0x12, 0x00,		/* Window */
+	0x36, 0x00,		/* Interval */
+	0x36, 0x00,		/* Window */
 };
 
 static const struct generic_data start_discovery_le_ext_scan_param = {
@@ -9735,8 +9733,8 @@ static const char start_discovery_valid_coded_scan_param[] = {
 	0x12, 0x00,		/* Interval */
 	0x12, 0x00,		/* Window */
 	0x01,			/* Type */
-	0x12, 0x00,		/* Interval */
-	0x12, 0x00,		/* Window */
+	0x36, 0x00,		/* Interval */
+	0x36, 0x00,		/* Window */
 };
 
 static const struct generic_data start_discovery_le_coded_scan_param = {
@@ -9766,8 +9764,8 @@ static const char start_discovery_valid_1m_2m_coded_scan_param[] = {
 	0x12, 0x00,		/* Interval */
 	0x12, 0x00,		/* Window */
 	0x01,			/* Type */
-	0x12, 0x00,		/* Interval */
-	0x12, 0x00,		/* Window */
+	0x36, 0x00,		/* Interval */
+	0x36, 0x00,		/* Window */
 };
 
 static const struct generic_data start_discovery_le_1m_coded_scan_param = {
@@ -12658,18 +12656,22 @@ static void verify_devcd(void *user_data)
 	struct test_data *data = tester_get_data();
 	const struct generic_data *test = data->test_data;
 	struct vhci *vhci = hciemu_get_vhci(data->hciemu);
-	char buf[MAX_COREDUMP_BUF_LEN] = {0};
+	char buf[MAX_COREDUMP_BUF_LEN + 1] = {0};
+	int read;
 	char delim[] = "\n";
 	char *line;
 	char *saveptr;
 	int i = 0;
 
 	/* Read the generated devcoredump file */
-	if (vhci_read_devcd(vhci, buf, sizeof(buf)) <= 0) {
+	read = vhci_read_devcd(vhci, buf, MAX_COREDUMP_BUF_LEN);
+	if (read <= 0) {
 		tester_warn("Unable to read devcoredump");
 		tester_test_failed();
 		return;
 	}
+	/* Make sure buf is nul-terminated */
+	buf[read] = '\0';
 
 	/* Verify if all devcoredump header fields are present */
 	line = strtok_r(buf, delim, &saveptr);

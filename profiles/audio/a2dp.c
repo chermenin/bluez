@@ -19,6 +19,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <errno.h>
+#include <limits.h>
 
 #include <dbus/dbus.h>
 #include <glib.h>
@@ -222,6 +223,7 @@ static void setup_free(struct a2dp_setup *s)
 		avdtp_unref(s->session);
 	g_slist_free_full(s->cb, g_free);
 	g_slist_free_full(s->caps, g_free);
+	g_free(s->err);
 	g_free(s);
 }
 
@@ -270,17 +272,34 @@ static void setup_cb_free(struct a2dp_setup_cb *cb)
 	g_free(cb);
 }
 
+static void setup_error_set(struct a2dp_setup *setup, struct avdtp_error *err)
+{
+	if (!err) {
+		g_free(setup->err);
+		setup->err = NULL;
+	} else {
+		if (!setup->err)
+			setup->err = g_new0(struct avdtp_error, 1);
+		memcpy(setup->err, err, sizeof(struct avdtp_error));
+	}
+}
+
+static void setup_error_init(struct a2dp_setup *setup, uint8_t type, int id)
+{
+	struct avdtp_error err;
+
+	avdtp_error_init(&err, type, id);
+	setup_error_set(setup, &err);
+}
+
 static void finalize_setup_errno(struct a2dp_setup *s, int err,
 					GSourceFunc cb1, ...)
 {
 	GSourceFunc finalize;
 	va_list args;
-	struct avdtp_error avdtp_err;
 
-	if (err < 0) {
-		avdtp_error_init(&avdtp_err, AVDTP_ERRNO, -err);
-		s->err = &avdtp_err;
-	}
+	if (err < 0)
+		setup_error_init(s, AVDTP_ERRNO, -err);
 
 	va_start(args, cb1);
 	finalize = cb1;
@@ -308,6 +327,7 @@ static int error_to_errno(struct avdtp_error *err)
 	case EHOSTDOWN:
 	case ECONNABORTED:
 	case EBADE:
+	case ECONNREFUSED:
 		return -perr;
 	default:
 		/*
@@ -576,10 +596,7 @@ done:
 
 	finalize_config(setup);
 
-	if (setup->err) {
-		g_free(setup->err);
-		setup->err = NULL;
-	}
+	setup_error_set(setup, NULL);
 
 	setup_unref(setup);
 
@@ -588,11 +605,9 @@ done:
 
 static void endpoint_setconf_cb(struct a2dp_setup *setup, gboolean ret)
 {
-	if (ret == FALSE) {
-		setup->err = g_new(struct avdtp_error, 1);
-		avdtp_error_init(setup->err, AVDTP_MEDIA_CODEC,
+	if (ret == FALSE)
+		setup_error_init(setup, AVDTP_MEDIA_CODEC,
 					AVDTP_UNSUPPORTED_CONFIGURATION);
-	}
 
 	auto_config(setup);
 	setup_unref(setup);
@@ -671,8 +686,7 @@ static gboolean endpoint_setconf_ind(struct avdtp *session,
 
 		if (cap->category == AVDTP_DELAY_REPORTING &&
 					!a2dp_sep->delay_reporting) {
-			setup->err = g_new(struct avdtp_error, 1);
-			avdtp_error_init(setup->err, AVDTP_DELAY_REPORTING,
+			setup_error_init(setup, AVDTP_DELAY_REPORTING,
 					AVDTP_UNSUPPORTED_CONFIGURATION);
 			goto done;
 		}
@@ -683,8 +697,7 @@ static gboolean endpoint_setconf_ind(struct avdtp *session,
 		codec = (struct avdtp_media_codec_capability *) cap->data;
 
 		if (codec->media_codec_type != a2dp_sep->codec) {
-			setup->err = g_new(struct avdtp_error, 1);
-			avdtp_error_init(setup->err, AVDTP_MEDIA_CODEC,
+			setup_error_init(setup, AVDTP_MEDIA_CODEC,
 					AVDTP_UNSUPPORTED_CONFIGURATION);
 			goto done;
 		}
@@ -704,10 +717,9 @@ static gboolean endpoint_setconf_ind(struct avdtp *session,
 			return TRUE;
 		}
 
-		setup_unref(setup);
-		setup->err = g_new(struct avdtp_error, 1);
-		avdtp_error_init(setup->err, AVDTP_MEDIA_CODEC,
+		setup_error_init(setup, AVDTP_MEDIA_CODEC,
 					AVDTP_UNSUPPORTED_CONFIGURATION);
+		setup_unref(setup);
 		break;
 	}
 
@@ -886,7 +898,7 @@ static void invalidate_remote_cache(struct a2dp_setup *setup,
 		/* Set error to -EAGAIN so the likes of policy plugin can
 		 * reattempt to connect.
 		 */
-		avdtp_error_init(setup->err, AVDTP_ERRNO, -EAGAIN);
+		setup_error_init(setup, AVDTP_ERRNO, -EAGAIN);
 	}
 }
 
@@ -910,10 +922,10 @@ static void setconf_cfm(struct avdtp *session, struct avdtp_local_sep *sep,
 	if (err) {
 		if (setup) {
 			setup_ref(setup);
-			setup->err = err;
+			setup_error_set(setup, err);
 			invalidate_remote_cache(setup, err);
 			finalize_config(setup);
-			setup->err = NULL;
+			setup_error_set(setup, NULL);
 			setup_unref(setup);
 		}
 
@@ -1116,7 +1128,7 @@ static void open_cfm(struct avdtp *session, struct avdtp_local_sep *sep,
 
 	if (err) {
 		setup->stream = NULL;
-		setup->err = err;
+		setup_error_set(setup, err);
 		if (setup->start)
 			finalize_resume(setup);
 	} else if (setup->chan)
@@ -1191,7 +1203,7 @@ static void start_cfm(struct avdtp *session, struct avdtp_local_sep *sep,
 
 	if (err) {
 		setup->stream = NULL;
-		setup->err = err;
+		setup_error_set(setup, err);
 	}
 
 	finalize_resume(setup);
@@ -1270,7 +1282,7 @@ static void suspend_cfm(struct avdtp *session, struct avdtp_local_sep *sep,
 
 	if (err) {
 		setup->stream = NULL;
-		setup->err = err;
+		setup_error_set(setup, err);
 	}
 
 	finalize_suspend(setup);
@@ -1316,6 +1328,9 @@ static struct a2dp_remote_sep *find_remote_sep(struct a2dp_channel *chan,
 						struct a2dp_sep *sep)
 {
 	struct avdtp_remote_sep *rsep;
+
+	if (!chan || !sep)
+		return NULL;
 
 	rsep = avdtp_find_remote_sep(chan->session, sep->lsep);
 
@@ -1418,7 +1433,7 @@ static void close_cfm(struct avdtp *session, struct avdtp_local_sep *sep,
 
 	if (err) {
 		setup->stream = NULL;
-		setup->err = err;
+		setup_error_set(setup, err);
 		finalize_config(setup);
 		return;
 	}
@@ -1528,7 +1543,7 @@ static void reconf_cfm(struct avdtp *session, struct avdtp_local_sep *sep,
 
 	if (err) {
 		setup->stream = NULL;
-		setup->err = err;
+		setup_error_set(setup, err);
 	}
 
 	finalize_config(setup);
@@ -2885,7 +2900,7 @@ static void discover_cb(struct avdtp *session, GSList *seps,
 
 	setup->seps = seps;
 	if (err)
-		setup->err = err;
+		setup_error_set(setup, err);
 
 	if (!err) {
 		g_slist_foreach(seps, foreach_register_remote_sep, setup->chan);

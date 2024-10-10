@@ -4,7 +4,7 @@
  *  BlueZ - Bluetooth protocol stack for Linux
  *
  *  Copyright (C) 2012-2014  Intel Corporation. All rights reserved.
- *  Copyright 2023 NXP
+ *  Copyright 2023-2024 NXP
  *
  *
  */
@@ -182,7 +182,7 @@ bool util_ltv_foreach(const uint8_t *data, uint8_t len, uint8_t *type,
 	struct iovec iov;
 	int i;
 
-	if (!func)
+	if (!func || !data)
 		return false;
 
 	iov.iov_base = (void *) data;
@@ -216,6 +216,15 @@ bool util_ltv_foreach(const uint8_t *data, uint8_t len, uint8_t *type,
 	}
 
 	return true;
+}
+
+/* Helper to add l,t,v data in an iovec struct */
+void util_ltv_push(struct iovec *output, uint8_t l, uint8_t t, void *v)
+{
+	output->iov_base = realloc(output->iov_base, output->iov_len + l + 2);
+	util_iov_push_u8(output, l + 1);
+	util_iov_push_u8(output, t);
+	util_iov_push_mem(output, l, v);
 }
 
 /* Helper to print debug information of LTV entries */
@@ -525,6 +534,22 @@ void *util_iov_push_u8(struct iovec *iov, uint8_t val)
 	put_u8(val, p);
 
 	return p;
+}
+
+void *util_iov_append(struct iovec *iov, const void *data, size_t len)
+{
+	iov->iov_base = realloc(iov->iov_base, iov->iov_len + len);
+	return util_iov_push_mem(iov, len, data);
+}
+
+struct iovec *util_iov_new(void *data, size_t len)
+{
+	struct iovec *iov;
+
+	iov = new0(struct iovec, 1);
+	util_iov_append(iov, data, len);
+
+	return iov;
 }
 
 void *util_iov_pull(struct iovec *iov, size_t len)
@@ -1551,9 +1576,23 @@ static const struct {
 	{ 0xfd60, "Sercomm Corporation"				},
 	{ 0xfd5f, "Oculus VR, LLC"				},
 	/* SDO defined */
-	{ 0xfffc, "AirFuel Alliance"				},
-	{ 0xfffe, "Alliance for Wireless Power (A4WP)"		},
-	{ 0xfffd, "Fast IDentity Online Alliance (FIDO)"	},
+	{ 0xfccc, "Wi-Fi Easy Connect Specification"		},
+	{ 0xffef, "Wi-Fi Direct Specification"			},
+	{ 0xfff0, "Public Key Open Credential (PKOC)"		},
+	{ 0xfff1, "ICCE Digital Key"				},
+	{ 0xfff2, "Aliro"					},
+	{ 0xfff3, "FiRa Consortium"				},
+	{ 0xfff4, "FiRa Consortium"				},
+	{ 0xfff5, "Car Connectivity Consortium, LLC"		},
+	{ 0xfff6, "Matter Profile ID"				},
+	{ 0xfff7, "Zigbee Direct"				},
+	{ 0xfff8, "Mopria Alliance BLE"				},
+	{ 0xfff9, "FIDO2 Secure Client-To-Authenticator Transport" },
+	{ 0xfffa, "ASTM Remote ID"				},
+	{ 0xfffb, "Direct Thread Commissioning"			},
+	{ 0xfffc, "Wireless Power Transfer (WPT)"		},
+	{ 0xfffd, "Universal Second Factor Authenticator"	},
+	{ 0xfffe, "Wireless Power Transfer"			},
 	{ }
 };
 
@@ -1638,6 +1677,8 @@ static const struct {
 	{ "a6695ace-ee7f-4fb9-881a-5fac66c629af", "BlueZ Offload Codecs"},
 	{ "6fbaf188-05e0-496a-9885-d6ddfdb4e03e",
 		"BlueZ Experimental ISO Socket"},
+	{ "69518c4c-b69f-4679-8bc1-c021b47b5733",
+		"BlueZ Experimental Poll Errqueue"},
 	{ }
 };
 

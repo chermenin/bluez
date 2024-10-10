@@ -62,6 +62,15 @@ array{byte} ReadValue(dict options)
 
 		Device object.
 
+	:string link (server only):
+
+		Link type.
+
+		Possible values:
+
+		:"BR/EDR":
+		:"LE":
+
 	Possible Errors:
 
 	:org.bluez.Error.Failed:
@@ -133,6 +142,7 @@ void WriteValue(array{byte} value, dict options)
 	:org.bluez.Error.InvalidValueLength:
 	:org.bluez.Error.NotAuthorized:
 	:org.bluez.Error.NotSupported:
+	:org.bluez.Error.ImproperlyConfigured:
 
 fd, uint16 AcquireWrite(dict options) [optional]
 ````````````````````````````````````````````````

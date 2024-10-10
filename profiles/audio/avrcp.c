@@ -118,8 +118,14 @@
 #define AVRCP_FEATURE_CATEGORY_2	0x0002
 #define AVRCP_FEATURE_CATEGORY_3	0x0004
 #define AVRCP_FEATURE_CATEGORY_4	0x0008
-#define AVRCP_FEATURE_PLAYER_SETTINGS	0x0010
-#define AVRCP_FEATURE_BROWSING			0x0040
+#define AVRCP_FEATURE_TG_PLAYER_SETTINGS	0x0010
+#define AVRCP_FEATURE_TG_GROUP_NAVIGATION	0x0020
+#define AVRCP_FEATURE_BROWSING				0x0040
+#define AVRCP_FEATURE_TG_MULTIPLE_PLAYER	0x0080
+#define AVRCP_FEATURE_TG_COVERT_ART			0x0100
+#define AVRCP_FEATURE_CT_GET_IMAGE_PROP		0x0080
+#define AVRCP_FEATURE_CT_GET_IMAGE			0x0100
+#define AVRCP_FEATURE_CT_GET_THUMBNAIL		0x0200
 
 #define AVRCP_BATTERY_STATUS_NORMAL		0
 #define AVRCP_BATTERY_STATUS_WARNING		1
@@ -254,6 +260,7 @@ struct avrcp_data {
 	struct avrcp_player *player;
 	uint16_t version;
 	int features;
+	uint16_t obex_port;
 	GSList *players;
 };
 
@@ -408,9 +415,12 @@ static sdp_record_t *avrcp_ct_record(bool browsing)
 	uint16_t lp = AVCTP_CONTROL_PSM;
 	uint16_t avctp_ver = 0x0103;
 	uint16_t feat = ( AVRCP_FEATURE_CATEGORY_1 |
-						AVRCP_FEATURE_CATEGORY_2 |
-						AVRCP_FEATURE_CATEGORY_3 |
-						AVRCP_FEATURE_CATEGORY_4);
+					AVRCP_FEATURE_CATEGORY_2 |
+					AVRCP_FEATURE_CATEGORY_3 |
+					AVRCP_FEATURE_CATEGORY_4 |
+					AVRCP_FEATURE_CT_GET_IMAGE_PROP |
+					AVRCP_FEATURE_CT_GET_IMAGE |
+					AVRCP_FEATURE_CT_GET_THUMBNAIL);
 
 	record = sdp_record_alloc();
 	if (!record)
@@ -487,7 +497,7 @@ static sdp_record_t *avrcp_tg_record(bool browsing)
 					AVRCP_FEATURE_CATEGORY_2 |
 					AVRCP_FEATURE_CATEGORY_3 |
 					AVRCP_FEATURE_CATEGORY_4 |
-					AVRCP_FEATURE_PLAYER_SETTINGS );
+					AVRCP_FEATURE_TG_PLAYER_SETTINGS);
 
 	record = sdp_record_alloc();
 	if (!record)
@@ -876,6 +886,8 @@ static const char *metadata_to_str(uint32_t id)
 		return "NumberOfTracks";
 	case AVRCP_MEDIA_ATTRIBUTE_DURATION:
 		return "Duration";
+	case AVRCP_MEDIA_ATTRIBUTE_IMG_HANDLE:
+		return "ImgHandle";
 	}
 
 	return NULL;
@@ -1190,6 +1202,8 @@ static uint32_t str_to_metadata(const char *str)
 		return AVRCP_MEDIA_ATTRIBUTE_N_TRACKS;
 	else if (strcasecmp(str, "Duration") == 0)
 		return AVRCP_MEDIA_ATTRIBUTE_DURATION;
+	else if (strcasecmp(str, "ImgHandle") == 0)
+		return AVRCP_MEDIA_ATTRIBUTE_IMG_HANDLE;
 
 	return 0;
 }
@@ -1209,6 +1223,10 @@ static GList *player_list_metadata(struct avrcp_player *player)
 		attrs = g_list_append(attrs,
 					GUINT_TO_POINTER(str_to_metadata(key)));
 	}
+
+	if (attrs == NULL)
+		return g_list_prepend(NULL,
+				GUINT_TO_POINTER(AVRCP_MEDIA_ATTRIBUTE_TITLE));
 
 	return attrs;
 }
@@ -2396,15 +2414,11 @@ static void avrcp_list_player_attributes(struct avrcp *session)
 }
 
 static void avrcp_parse_attribute_list(struct avrcp_player *player,
+					struct media_item *item,
 					uint8_t *operands, uint8_t count)
 {
 	struct media_player *mp = player->user_data;
-	struct media_item *item;
 	int i;
-
-	media_player_clear_metadata(mp);
-
-	item = media_player_set_playlist_item(mp, player->uid);
 
 	for (i = 0; count > 0; count--) {
 		uint32_t id;
@@ -2430,8 +2444,6 @@ static void avrcp_parse_attribute_list(struct avrcp_player *player,
 
 		i += len;
 	}
-
-	media_player_metadata_changed(mp);
 }
 
 static gboolean avrcp_get_element_attributes_rsp(struct avctp *conn,
@@ -2444,6 +2456,8 @@ static gboolean avrcp_get_element_attributes_rsp(struct avctp *conn,
 	struct avrcp *session = user_data;
 	struct avrcp_player *player = session->controller->player;
 	struct avrcp_header *pdu = (void *) operands;
+	struct media_player *mp = player->user_data;
+	struct media_item *item;
 	uint8_t count;
 
 	if (code == AVC_CTYPE_REJECTED)
@@ -2456,7 +2470,13 @@ static gboolean avrcp_get_element_attributes_rsp(struct avctp *conn,
 		return FALSE;
 	}
 
-	avrcp_parse_attribute_list(player, &pdu->params[1], count);
+	media_player_clear_metadata(mp);
+
+	item = media_player_set_playlist_item(mp, player->uid);
+
+	avrcp_parse_attribute_list(player, item, &pdu->params[1], count);
+
+	media_player_metadata_changed(mp);
 
 	avrcp_get_play_status(session);
 
@@ -2542,20 +2562,23 @@ static struct media_item *parse_media_element(struct avrcp *session,
 	struct avrcp_player *player;
 	struct media_player *mp;
 	struct media_item *item;
-	uint16_t namelen;
+	uint16_t namelen, namesize;
 	char name[255];
 	uint64_t uid;
+	uint8_t count;
 
 	if (len < 13)
 		return NULL;
 
 	uid = get_be64(&operands[0]);
 
-	namelen = MIN(get_be16(&operands[11]), sizeof(name) - 1);
-	if (namelen > 0) {
+	memset(name, 0, sizeof(name));
+	namesize = get_be16(&operands[11]);
+	namelen = MIN(namesize, sizeof(name) - 1);
+	if (namelen > 0)
 		memcpy(name, &operands[13], namelen);
-		name[namelen] = '\0';
-	}
+
+	count = operands[13 + namesize];
 
 	player = session->controller->player;
 	mp = player->user_data;
@@ -2565,6 +2588,9 @@ static struct media_item *parse_media_element(struct avrcp *session,
 		return NULL;
 
 	media_item_set_playable(item, true);
+
+	avrcp_parse_attribute_list(player, item, &operands[14 + namesize],
+					count);
 
 	return item;
 }
@@ -2588,11 +2614,10 @@ static struct media_item *parse_media_folder(struct avrcp *session,
 	type = operands[8];
 	playable = operands[9];
 
+	memset(name, 0, sizeof(name));
 	namelen = MIN(get_be16(&operands[12]), sizeof(name) - 1);
-	if (namelen > 0) {
+	if (namelen > 0)
 		memcpy(name, &operands[14], namelen);
-		name[namelen] = '\0';
-	}
 
 	item = media_player_create_folder(mp, name, type, uid);
 	if (!item)
@@ -2701,20 +2726,25 @@ static void avrcp_list_items(struct avrcp *session, uint32_t start,
 	memset(buf, 0, sizeof(buf));
 
 	pdu->pdu_id = AVRCP_GET_FOLDER_ITEMS;
-	pdu->param_len = cpu_to_be16(10 + sizeof(uint32_t));
+	pdu->param_len = cpu_to_be16(10 + (6 * sizeof(uint32_t)));
 
 	pdu->params[0] = player->scope;
 
 	put_be32(start, &pdu->params[1]);
 	put_be32(end, &pdu->params[5]);
 
-	pdu->params[9] = 1;
+	pdu->params[9] = 6;
 
 	/* Only the title (0x01) is mandatory. This can be extended to
 	 * support AVRCP_MEDIA_ATTRIBUTE_* attributes */
 	put_be32(AVRCP_MEDIA_ATTRIBUTE_TITLE, &pdu->params[10]);
+	put_be32(AVRCP_MEDIA_ATTRIBUTE_ARTIST, &pdu->params[14]);
+	put_be32(AVRCP_MEDIA_ATTRIBUTE_ALBUM, &pdu->params[18]);
+	put_be32(AVRCP_MEDIA_ATTRIBUTE_TRACK, &pdu->params[22]);
+	put_be32(AVRCP_MEDIA_ATTRIBUTE_DURATION, &pdu->params[26]);
+	put_be32(AVRCP_MEDIA_ATTRIBUTE_IMG_HANDLE, &pdu->params[30]);
 
-	length += sizeof(uint32_t);
+	length += 6 * sizeof(uint32_t);
 
 	avctp_send_browsing_req(session->conn, buf, length,
 					avrcp_list_items_rsp, session);
@@ -2839,6 +2869,8 @@ static gboolean avrcp_get_item_attributes_rsp(struct avctp *conn,
 	struct avrcp *session = user_data;
 	struct avrcp_player *player = session->controller->player;
 	struct avrcp_browsing_header *pdu = (void *) operands;
+	struct media_player *mp = player->user_data;
+	struct media_item *item;
 	uint8_t count;
 
 	if (pdu == NULL) {
@@ -2858,7 +2890,13 @@ static gboolean avrcp_get_item_attributes_rsp(struct avctp *conn,
 		return FALSE;
 	}
 
-	avrcp_parse_attribute_list(player, &pdu->params[2], count);
+	media_player_clear_metadata(mp);
+
+	item = media_player_set_playlist_item(mp, player->uid);
+
+	avrcp_parse_attribute_list(player, item, &pdu->params[2], count);
+
+	media_player_metadata_changed(mp);
 
 	avrcp_get_play_status(session);
 
@@ -3520,6 +3558,7 @@ static struct avrcp_player *create_ct_player(struct avrcp *session,
 		return NULL;
 	}
 
+	media_player_set_obex_port(mp, session->controller->obex_port);
 	media_player_set_callbacks(mp, &ct_cbs, player);
 	player->user_data = mp;
 	player->destroy = (GDestroyNotify) media_player_destroy;
@@ -3802,6 +3841,17 @@ static void avrcp_setting_changed(struct avrcp *session,
 	}
 }
 
+static void avrcp_now_playing_changed(struct avrcp *session,
+						struct avrcp_header *pdu)
+{
+	struct avrcp_player *player = session->controller->player;
+	struct media_player *mp = player->user_data;
+
+	DBG("NowPlaying changed");
+
+	media_player_clear_playlist(mp);
+}
+
 static void avrcp_available_players_changed(struct avrcp *session,
 						struct avrcp_header *pdu)
 {
@@ -3891,6 +3941,9 @@ static gboolean avrcp_handle_event(struct avctp *conn, uint8_t code,
 		break;
 	case AVRCP_EVENT_SETTINGS_CHANGED:
 		avrcp_setting_changed(session, pdu);
+		break;
+	case AVRCP_EVENT_NOW_PLAYING_CHANGED:
+		avrcp_now_playing_changed(session, pdu);
 		break;
 	case AVRCP_EVENT_AVAILABLE_PLAYERS_CHANGED:
 		avrcp_available_players_changed(session, pdu);
@@ -3983,6 +4036,7 @@ static gboolean avrcp_get_capabilities_resp(struct avctp *conn, uint8_t code,
 		case AVRCP_EVENT_TRACK_CHANGED:
 		case AVRCP_EVENT_PLAYBACK_POS_CHANGED:
 		case AVRCP_EVENT_SETTINGS_CHANGED:
+		case AVRCP_EVENT_NOW_PLAYING_CHANGED:
 		case AVRCP_EVENT_ADDRESSED_PLAYER_CHANGED:
 		case AVRCP_EVENT_UIDS_CHANGED:
 		case AVRCP_EVENT_AVAILABLE_PLAYERS_CHANGED:
@@ -4004,7 +4058,8 @@ static gboolean avrcp_get_capabilities_resp(struct avctp *conn, uint8_t code,
 	if (events == (1 << AVRCP_EVENT_VOLUME_CHANGED))
 		return FALSE;
 
-	if ((session->controller->features & AVRCP_FEATURE_PLAYER_SETTINGS) &&
+	if ((session->controller->features &
+			AVRCP_FEATURE_TG_PLAYER_SETTINGS) &&
 			!(events & (1 << AVRCP_EVENT_SETTINGS_CHANGED)))
 		avrcp_list_player_attributes(session);
 
@@ -4073,8 +4128,9 @@ static struct avrcp_data *data_init(struct avrcp *session, const char *uuid)
 {
 	struct avrcp_data *data;
 	const sdp_record_t *rec;
-	sdp_list_t *list;
+	sdp_list_t *list, *protos;
 	sdp_profile_desc_t *desc;
+	int port = 0;
 
 	data = g_new0(struct avrcp_data, 1);
 
@@ -4089,6 +4145,35 @@ static struct avrcp_data *data_init(struct avrcp *session, const char *uuid)
 
 	sdp_get_int_attr(rec, SDP_ATTR_SUPPORTED_FEATURES, &data->features);
 	sdp_list_free(list, free);
+
+	if ((g_strcmp0(uuid, AVRCP_TARGET_UUID) != 0) ||
+			!(data->features & AVRCP_FEATURE_TG_COVERT_ART) ||
+			(sdp_get_add_access_protos(rec, &protos) != 0))
+		return data;
+
+	/* Get the PSM port from the Additional Protocol Descriptor list
+	 * entry containing OBEX UUID
+	 */
+	for (list = protos; list; list = list->next) {
+		sdp_list_t *p;
+
+		for (p = list->data; p; p = p->next) {
+			sdp_data_t *seq = p->data;
+
+			if ((sdp_uuid_to_proto(&seq->val.uuid) == OBEX_UUID) &&
+					SDP_IS_UUID(seq->dtd)) {
+				port = sdp_get_proto_port(list, L2CAP_UUID);
+				goto done;
+			}
+		}
+	}
+
+done:
+	if (port > 0)
+		data->obex_port = port;
+
+	sdp_list_foreach(protos, (sdp_list_func_t) sdp_list_free, NULL);
+	sdp_list_free(protos, NULL);
 
 	return data;
 }
@@ -4187,6 +4272,8 @@ static void controller_init(struct avrcp *session)
 	session->controller = controller;
 
 	DBG("%p version 0x%04x", controller, controller->version);
+	if (controller->obex_port)
+		DBG("%p OBEX PSM 0x%04x", controller, controller->obex_port);
 
 	service = btd_device_get_service(session->dev, AVRCP_TARGET_UUID);
 	btd_service_connecting_complete(service, 0);

@@ -26,6 +26,7 @@
 #include <time.h>
 #include <sys/time.h>
 #include <sys/socket.h>
+#include <limits.h>
 
 #include "lib/bluetooth.h"
 #include "lib/uuid.h"
@@ -376,7 +377,7 @@ static void print_packet(struct timeval *tv, struct ucred *cred, char ident,
 					const char *text, const char *extra)
 {
 	int col = num_columns();
-	char line[256], ts_str[96], pid_str[140];
+	char line[LINE_MAX], ts_str[96], pid_str[140];
 	int n, ts_len = 0, ts_pos = 0, len = 0, pos = 0;
 	static size_t last_frame;
 
@@ -3779,7 +3780,7 @@ static void print_transport_data(const uint8_t *data, uint8_t len)
 		print_field("      Provider Only");
 		break;
 	case 0x03:
-		print_field("      Both Seeker an Provider");
+		print_field("      Both Seeker and Provider");
 		break;
 	}
 
@@ -4845,6 +4846,50 @@ static void flow_spec_modify_cmd(uint16_t index, const void *data, uint8_t size)
 	print_flow_spec("RX", cmd->rx_flow_spec);
 }
 
+static void print_coding_format(const char *label,
+						const uint8_t coding_format[5])
+{
+	print_field("%s:", label);
+	packet_print_codec_id("  Codec", coding_format[0]);
+	if (coding_format[0] == 0xff) {
+		print_field("  Company: %s",
+				bt_compidtostr(get_le16(coding_format + 1)));
+		print_field("  Vendor Specific Codec: 0x%4.4x",
+						get_le16(coding_format + 3));
+	}
+}
+
+static void print_pcm_data_format(const char *label, uint8_t pcm)
+{
+	switch (pcm) {
+	case 0:
+		print_field("%s: NA", label);
+		break;
+	case 1:
+		print_field("%s: 1's complement", label);
+		break;
+	case 2:
+		print_field("%s: 2's complement", label);
+		break;
+	case 3:
+		print_field("%s: Sign-magnitude", label);
+		break;
+	case 4:
+		print_field("%s: Unsigned", label);
+		break;
+	default:
+		print_field("%s: Unknown (0x%2.2x)", label, pcm);
+	}
+}
+
+static void print_data_path(const char *label, uint8_t data_path)
+{
+	if (data_path == 0)
+		print_field("%s: HCI", label);
+	else
+		print_field("%s: Vendor Specific (0x%2.2x)", label, data_path);
+}
+
 static void enhanced_setup_sync_conn_cmd(uint16_t index, const void *data,
 							uint8_t size)
 {
@@ -4853,9 +4898,30 @@ static void enhanced_setup_sync_conn_cmd(uint16_t index, const void *data,
 	print_handle(cmd->handle);
 	print_field("Transmit bandwidth: %d", le32_to_cpu(cmd->tx_bandwidth));
 	print_field("Receive bandwidth: %d", le32_to_cpu(cmd->rx_bandwidth));
-
-	/* TODO */
-
+	print_coding_format("Transmit Coding Format", cmd->tx_coding_format);
+	print_coding_format("Receive Coding Format", cmd->rx_coding_format);
+	print_field("Transmit Codec Frame Size: %d",
+					le16_to_cpu(cmd->tx_codec_frame_size));
+	print_field("Receive Codec Frame Size: %d",
+					le16_to_cpu(cmd->rx_codec_frame_size));
+	print_coding_format("Input Coding Format", cmd->input_coding_format);
+	print_coding_format("Output Coding Format", cmd->output_coding_format);
+	print_field("Input Coded Data Size: %d",
+				le16_to_cpu(cmd->input_coded_data_size));
+	print_field("Output Coded Data Size: %d",
+				le16_to_cpu(cmd->output_coded_data_size));
+	print_pcm_data_format("Input PCM Data Format",
+						cmd->input_pcm_data_format);
+	print_pcm_data_format("Output PCM Data Format",
+						cmd->output_pcm_data_format);
+	print_field("Input PCM Sample Payload MSB Position: %d",
+						cmd->input_pcm_msb_position);
+	print_field("Output PCM Sample Payload MSB Position: %d",
+						cmd->output_pcm_msb_position);
+	print_data_path("Input Data Path", cmd->input_data_path);
+	print_data_path("Output Data Path", cmd->output_data_path);
+	print_field("Input Transport Unit Size: %d", cmd->input_unit_size);
+	print_field("Output Transport Unit Size: %d", cmd->output_unit_size);
 	print_field("Max latency: %d", le16_to_cpu(cmd->max_latency));
 	print_pkt_type_sco(cmd->pkt_type);
 	print_retransmission_effort(cmd->retrans_effort);
@@ -4870,9 +4936,30 @@ static void enhanced_accept_sync_conn_request_cmd(uint16_t index,
 	print_bdaddr(cmd->bdaddr);
 	print_field("Transmit bandwidth: %d", le32_to_cpu(cmd->tx_bandwidth));
 	print_field("Receive bandwidth: %d", le32_to_cpu(cmd->rx_bandwidth));
-
-	/* TODO */
-
+	print_coding_format("Transmit Coding Format", cmd->tx_coding_format);
+	print_coding_format("Receive Coding Format", cmd->rx_coding_format);
+	print_field("Transmit Codec Frame Size: %d",
+					le16_to_cpu(cmd->tx_codec_frame_size));
+	print_field("Receive Codec Frame Size: %d",
+					le16_to_cpu(cmd->rx_codec_frame_size));
+	print_coding_format("Input Coding Format", cmd->input_coding_format);
+	print_coding_format("Output Coding Format", cmd->output_coding_format);
+	print_field("Input Coded Data Size: %d",
+				le16_to_cpu(cmd->input_coded_data_size));
+	print_field("Output Coded Data Size: %d",
+				le16_to_cpu(cmd->output_coded_data_size));
+	print_pcm_data_format("Input PCM Data Format",
+						cmd->input_pcm_data_format);
+	print_pcm_data_format("Output PCM Data Format",
+						cmd->output_pcm_data_format);
+	print_field("Input PCM Sample Payload MSB Position: %d",
+						cmd->input_pcm_msb_position);
+	print_field("Output PCM Sample Payload MSB Position: %d",
+						cmd->output_pcm_msb_position);
+	print_data_path("Input Data Path", cmd->input_data_path);
+	print_data_path("Output Data Path", cmd->output_data_path);
+	print_field("Input Transport Unit Size: %d", cmd->input_unit_size);
+	print_field("Output Transport Unit Size: %d", cmd->output_unit_size);
 	print_field("Max latency: %d", le16_to_cpu(cmd->max_latency));
 	print_pkt_type_sco(cmd->pkt_type);
 	print_retransmission_effort(cmd->retrans_effort);
@@ -11520,7 +11607,7 @@ static void le_pa_report_evt(struct timeval *tv, uint16_t index,
 
 	print_field("Data status: %s%s%s", color_on, str, COLOR_OFF);
 	print_field("Data length: 0x%2.2x", evt->data_len);
-	packet_hexdump(evt->data, evt->data_len);
+	print_eir(evt->data, evt->data_len, true);
 }
 
 static void le_pa_sync_lost_evt(struct timeval *tv, uint16_t index,
@@ -13338,6 +13425,57 @@ static void mgmt_set_low_energy_cmd(const void *data, uint16_t size)
 	print_enable("Low Energy", enable);
 }
 
+static void mgmt_set_blocked_keys_cmd(const void *data, uint16_t size)
+{
+	struct iovec frame = { (void *)data, size };
+	uint16_t num_keys;
+	int i;
+
+	if (!util_iov_pull_le16(&frame, &num_keys)) {
+		print_field("Keys: invalid size");
+		return;
+	}
+
+	print_field("Keys: %u", num_keys);
+
+	for (i = 0; i < num_keys; i++) {
+		uint8_t type;
+		uint8_t *key;
+
+		if (!util_iov_pull_u8(&frame, &type)) {
+			print_field("Key type[%u]: invalid size", i);
+			return;
+		}
+
+		switch (type) {
+		case 0x00:
+			print_field("type: Link Key (0x00)");
+			break;
+		case 0x01:
+			print_field("type: Long Term Key (0x01)");
+			break;
+		case 0x02:
+			print_field("type: Identity Resolving Key (0x02)");
+			break;
+		}
+
+		key = util_iov_pull_mem(&frame, 16);
+		if (!key) {
+			print_field("Key[%u]: invalid size", i);
+			return;
+		}
+
+		print_link_key(key);
+	}
+}
+
+static void mgmt_set_wbs_cmd(const void *data, uint16_t size)
+{
+	uint8_t enable = get_u8(data);
+
+	print_enable("Wideband Speech", enable);
+}
+
 static void mgmt_new_settings_rsp(const void *data, uint16_t size)
 {
 	uint32_t current_settings = get_le32(data);
@@ -14793,8 +14931,12 @@ static const struct mgmt_data mgmt_command_table[] = {
 	{ 0x0045, "Set PHY Configuration",
 				mgmt_set_phy_cmd, 4, true,
 				mgmt_null_rsp, 0, true },
-	{ 0x0046, "Load Blocked Keys" },
-	{ 0x0047, "Set Wideband Speech" },
+	{ 0x0046, "Set Blocked Keys",
+				mgmt_set_blocked_keys_cmd, 2, false,
+				mgmt_null_rsp, 0, true },
+	{ 0x0047, "Set Wideband Speech",
+				mgmt_set_wbs_cmd, 1, true,
+				mgmt_new_settings_rsp, 4, true },
 	{ 0x0048, "Read Controller Capabilities" },
 	{ 0x0049, "Read Experimental Features Information",
 				mgmt_null_cmd, 0, true,

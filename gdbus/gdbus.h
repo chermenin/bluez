@@ -4,6 +4,7 @@
  *  D-Bus helper library
  *
  *  Copyright (C) 2004-2011  Marcel Holtmann <marcel@holtmann.org>
+ *  Copyright 2024 NXP
  *
  *
  */
@@ -72,6 +73,7 @@ typedef void (* GDBusSecurityFunction) (DBusConnection *connection,
 
 enum GDBusFlags {
 	G_DBUS_FLAG_ENABLE_EXPERIMENTAL = (1 << 0),
+	G_DBUS_FLAG_ENABLE_TESTING      = (1 << 1),
 };
 
 enum GDBusMethodFlags {
@@ -79,16 +81,19 @@ enum GDBusMethodFlags {
 	G_DBUS_METHOD_FLAG_NOREPLY      = (1 << 1),
 	G_DBUS_METHOD_FLAG_ASYNC        = (1 << 2),
 	G_DBUS_METHOD_FLAG_EXPERIMENTAL = (1 << 3),
+	G_DBUS_METHOD_FLAG_TESTING      = (1 << 4),
 };
 
 enum GDBusSignalFlags {
 	G_DBUS_SIGNAL_FLAG_DEPRECATED   = (1 << 0),
 	G_DBUS_SIGNAL_FLAG_EXPERIMENTAL = (1 << 1),
+	G_DBUS_SIGNAL_FLAG_TESTING      = (1 << 2),
 };
 
 enum GDBusPropertyFlags {
 	G_DBUS_PROPERTY_FLAG_DEPRECATED   = (1 << 0),
 	G_DBUS_PROPERTY_FLAG_EXPERIMENTAL = (1 << 1),
+	G_DBUS_PROPERTY_FLAG_TESTING      = (1 << 2),
 };
 
 enum GDBusSecurityFlags {
@@ -186,6 +191,20 @@ struct GDBusSecurityTable {
 	.function = _function, \
 	.flags = G_DBUS_METHOD_FLAG_ASYNC | G_DBUS_METHOD_FLAG_EXPERIMENTAL
 
+#define GDBUS_TESTING_METHOD(_name, _in_args, _out_args, _function) \
+	.name = _name, \
+	.in_args = _in_args, \
+	.out_args = _out_args, \
+	.function = _function, \
+	.flags = G_DBUS_METHOD_FLAG_TESTING
+
+#define GDBUS_TESTING_ASYNC_METHOD(_name, _in_args, _out_args, _function) \
+	.name = _name, \
+	.in_args = _in_args, \
+	.out_args = _out_args, \
+	.function = _function, \
+	.flags = G_DBUS_METHOD_FLAG_ASYNC | G_DBUS_METHOD_FLAG_TESTING
+
 #define GDBUS_NOREPLY_METHOD(_name, _in_args, _out_args, _function) \
 	.name = _name, \
 	.in_args = _in_args, \
@@ -203,6 +222,11 @@ struct GDBusSecurityTable {
 	.flags = G_DBUS_SIGNAL_FLAG_DEPRECATED
 
 #define GDBUS_EXPERIMENTAL_SIGNAL(_name, _args) \
+	.name = _name, \
+	.args = _args, \
+	.flags = G_DBUS_SIGNAL_FLAG_EXPERIMENTAL
+
+#define GDBUS_TESTING_SIGNAL(_name, _args) \
 	.name = _name, \
 	.args = _args, \
 	.flags = G_DBUS_SIGNAL_FLAG_EXPERIMENTAL
@@ -338,6 +362,11 @@ gboolean g_dbus_proxy_set_property_basic(GDBusProxy *proxy,
 				const char *name, int type, const void *value,
 				GDBusResultFunction function, void *user_data,
 				GDBusDestroyFunction destroy);
+
+gboolean g_dbus_proxy_set_property_dict(GDBusProxy *proxy,
+				const char *name, GDBusResultFunction function,
+				void *user_data, GDBusDestroyFunction destroy,
+				char *entry, ...);
 
 gboolean g_dbus_proxy_set_property_array(GDBusProxy *proxy,
 				const char *name, int type, const void *value,
